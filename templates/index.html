@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nithin Kamath Post Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .copy-btn:active { transform: scale(0.95); }
+        .slot-input:focus { border-color: #111827; box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.12); }
+        .output-box { font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="max-w-6xl mx-auto px-4 py-8">
+        <header class="mb-6">
+            <h1 class="text-2xl font-bold text-gray-900">Nithin Kamath Post Generator</h1>
+            <p class="text-gray-600 mt-1">Draft X or LinkedIn posts from context and facts</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div class="space-y-6">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h2 class="text-lg font-semibold text-gray-800 mb-4">Post Configuration</h2>
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Platform</label>
+                            <select id="platform" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-900">
+                                <option value="x">X (Twitter)</option>
+                                <option value="linkedin">LinkedIn</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Variants</label>
+                            <input id="variants" type="number" min="1" max="5" value="3" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-gray-900" />
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <input type="checkbox" id="thread" class="h-4 w-4 text-gray-900 rounded border-gray-300">
+                            <label for="thread" class="text-sm font-medium text-gray-700">Generate X thread</label>
+                        </div>
+                        <span id="llmStatus" class="text-xs px-2 py-1 rounded"></span>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2 ml-7">Thread only applies to X posts</p>
+                </div>
+
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h2 class="text-lg font-semibold text-gray-800 mb-4">AI Enhancements</h2>
+                    <div class="flex items-center space-x-3 mb-2">
+                        <input type="checkbox" id="proofread" class="h-4 w-4 text-gray-900 rounded border-gray-300" checked>
+                        <label for="proofread" class="text-sm font-medium text-gray-700">Proofread output</label>
+                    </div>
+                    <div class="flex items-center space-x-3 mb-2">
+                        <input type="checkbox" id="allowResearch" class="h-4 w-4 text-gray-900 rounded border-gray-300" checked>
+                        <label for="allowResearch" class="text-sm font-medium text-gray-700">Enable research</label>
+                    </div>
+                    <div class="flex items-center space-x-3 mb-4">
+                        <input type="checkbox" id="autoResearch" class="h-4 w-4 text-gray-900 rounded border-gray-300" checked>
+                        <label for="autoResearch" class="text-sm font-medium text-gray-700">Auto research if context is short</label>
+                    </div>
+                    <input id="researchQuery" type="text" class="slot-input w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none text-sm" placeholder="Optional research topic or query" />
+                    <p class="text-xs text-gray-500 mt-2">Requires `RESEARCH_PROVIDER` and API key to be set.</p>
+                </div>
+
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h2 class="text-lg font-semibold text-gray-800 mb-4">Context</h2>
+                    <textarea id="context" rows="4" class="slot-input w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none text-sm" placeholder="What is the post about?"></textarea>
+                </div>
+
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h2 class="text-lg font-semibold text-gray-800 mb-4">Facts (one per line)</h2>
+                    <textarea id="facts" rows="4" class="slot-input w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none text-sm" placeholder="Only factual statements you want included"></textarea>
+                </div>
+
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h2 class="text-lg font-semibold text-gray-800 mb-4">Angle & CTA</h2>
+                    <input id="angle" type="text" class="slot-input w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none text-sm mb-3" placeholder="Angle / stance (optional)" />
+                    <input id="cta" type="text" class="slot-input w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none text-sm" placeholder="CTA or question (optional)" />
+                </div>
+
+                <button id="generateBtn" class="w-full bg-gray-900 hover:bg-gray-800 text-white font-semibold py-3 px-4 rounded-lg transition-colors">
+                    Generate Post
+                </button>
+            </div>
+
+            <div class="space-y-6">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-semibold text-gray-800">Generated Drafts</h2>
+                        <button id="copyBtn" class="copy-btn text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded transition-colors">
+                            Copy
+                        </button>
+                    </div>
+                    <div id="output" class="output-box bg-gray-50 border border-gray-200 rounded p-4 min-h-[280px] whitespace-pre-wrap text-sm text-gray-800">
+                        <span class="text-gray-400">Drafts will appear here...</span>
+                    </div>
+                </div>
+
+                <div id="researchContainer" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h3 class="text-sm font-semibold text-blue-800 mb-2">Research Notes</h3>
+                    <div id="researchSummary" class="text-sm text-blue-800 whitespace-pre-wrap"></div>
+                    <div id="researchSources" class="text-xs text-blue-700 mt-2 space-y-1"></div>
+                </div>
+
+                <div id="warningsContainer" class="hidden bg-amber-50 border border-amber-200 rounded-lg p-4">
+                    <h3 class="text-sm font-semibold text-amber-800 mb-2">Warnings</h3>
+                    <ul id="warningsList" class="text-sm text-amber-700 space-y-1"></ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const platform = document.getElementById('platform');
+        const variants = document.getElementById('variants');
+        const thread = document.getElementById('thread');
+        const proofread = document.getElementById('proofread');
+        const allowResearch = document.getElementById('allowResearch');
+        const autoResearch = document.getElementById('autoResearch');
+        const researchQuery = document.getElementById('researchQuery');
+        const context = document.getElementById('context');
+        const facts = document.getElementById('facts');
+        const angle = document.getElementById('angle');
+        const cta = document.getElementById('cta');
+        const generateBtn = document.getElementById('generateBtn');
+        const output = document.getElementById('output');
+        const copyBtn = document.getElementById('copyBtn');
+        const warningsContainer = document.getElementById('warningsContainer');
+        const warningsList = document.getElementById('warningsList');
+        const llmStatus = document.getElementById('llmStatus');
+        const researchContainer = document.getElementById('researchContainer');
+        const researchSummary = document.getElementById('researchSummary');
+        const researchSources = document.getElementById('researchSources');
+
+        function parseFacts() {
+            return facts.value
+                .split('\n')
+                .map(line => line.trim())
+                .filter(line => line.length > 0);
+        }
+
+        function toggleThreadAvailability() {
+            if (platform.value === 'x') {
+                thread.disabled = false;
+            } else {
+                thread.checked = false;
+                thread.disabled = true;
+            }
+        }
+
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/nithin/status');
+                const data = await response.json();
+                if (data.available) {
+                    llmStatus.textContent = 'LLM available';
+                    llmStatus.className = 'text-xs px-2 py-1 rounded bg-green-100 text-green-700';
+                } else {
+                    llmStatus.textContent = 'LLM not configured';
+                    llmStatus.className = 'text-xs px-2 py-1 rounded bg-gray-100 text-gray-500';
+                }
+            } catch (error) {
+                llmStatus.textContent = 'Status error';
+                llmStatus.className = 'text-xs px-2 py-1 rounded bg-red-100 text-red-700';
+            }
+        }
+
+        async function generatePost() {
+            const contextValue = context.value.trim();
+            if (!contextValue) {
+                alert('Please provide context for the post.');
+                return;
+            }
+
+            generateBtn.disabled = true;
+            generateBtn.textContent = 'Generating...';
+
+            try {
+                const response = await fetch('/api/nithin/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        platform: platform.value,
+                        context: contextValue,
+                        facts: parseFacts(),
+                        angle: angle.value.trim() || null,
+                        cta: cta.value.trim() || null,
+                        thread: thread.checked,
+                        variants: parseInt(variants.value || '3', 10),
+                        proofread: proofread.checked,
+                        allow_research: allowResearch.checked,
+                        auto_research: autoResearch.checked,
+                        research_query: researchQuery.value.trim() || null
+                    })
+                });
+
+                const data = await response.json();
+                output.textContent = data.text;
+                output.classList.remove('text-gray-400', 'text-red-500');
+
+                if (data.warnings && data.warnings.length > 0) {
+                    warningsContainer.classList.remove('hidden');
+                    warningsList.innerHTML = data.warnings.map(w => `<li>• ${w}</li>`).join('');
+                } else {
+                    warningsContainer.classList.add('hidden');
+                }
+
+                if (data.metadata && (data.metadata.research_summary || (data.metadata.sources && data.metadata.sources.length > 0))) {
+                    researchContainer.classList.remove('hidden');
+                    researchSummary.textContent = data.metadata.research_summary || '';
+                    if (data.metadata.sources && data.metadata.sources.length > 0) {
+                        researchSources.innerHTML = data.metadata.sources.map((s, i) => {
+                            const title = s.title || `Source ${i+1}`;
+                            const url = s.url || '';
+                            return `<div>${i+1}. ${title} ${url ? `<a href="${url}" target="_blank" class="underline">[link]</a>` : ''}</div>`;
+                        }).join('');
+                    } else {
+                        researchSources.innerHTML = '';
+                    }
+                } else {
+                    researchContainer.classList.add('hidden');
+                    researchSummary.textContent = '';
+                    researchSources.innerHTML = '';
+                }
+            } catch (error) {
+                output.textContent = 'Error generating post. Please try again.';
+                output.classList.add('text-red-500');
+            } finally {
+                generateBtn.disabled = false;
+                generateBtn.textContent = 'Generate Post';
+            }
+        }
+
+        function copyOutput() {
+            const text = output.textContent;
+            if (text && !text.includes('Drafts will appear here')) {
+                navigator.clipboard.writeText(text).then(() => {
+                    const originalText = copyBtn.textContent;
+                    copyBtn.textContent = 'Copied!';
+                    setTimeout(() => {
+                        copyBtn.textContent = originalText;
+                    }, 2000);
+                });
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            toggleThreadAvailability();
+            checkStatus();
+            platform.addEventListener('change', toggleThreadAvailability);
+            generateBtn.addEventListener('click', generatePost);
+            copyBtn.addEventListener('click', copyOutput);
+        });
+    </script>
+</body>
+</html>
