@@ -19,7 +19,9 @@ from app.nithin_post_generator import get_nithin_generator
 app = FastAPI(title="Nithin Kamath Post Generator")
 
 templates = Jinja2Templates(directory="templates")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+static_dir = Path("static")
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)
