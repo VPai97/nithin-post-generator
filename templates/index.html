@@ -122,6 +122,21 @@
             color: var(--accent-strong);
         }
 
+        .pill[data-state="ok"] {
+            background: rgba(47, 111, 109, 0.12);
+            color: var(--accent-strong);
+        }
+
+        .pill[data-state="off"] {
+            background: rgba(95, 107, 115, 0.12);
+            color: var(--muted);
+        }
+
+        .pill[data-state="error"] {
+            background: rgba(180, 35, 24, 0.12);
+            color: #b42318;
+        }
+
         .main-grid {
             display: grid;
             gap: 24px;
@@ -496,13 +511,16 @@
                 if (data.available) {
                     llmStatus.textContent = `LLM available (${data.provider || 'unknown'})`;
                     llmStatus.className = 'pill';
+                    llmStatus.dataset.state = 'ok';
                 } else {
                     llmStatus.textContent = 'LLM not configured';
                     llmStatus.className = 'pill';
+                    llmStatus.dataset.state = 'off';
                 }
             } catch (error) {
                 llmStatus.textContent = 'Status error';
                 llmStatus.className = 'pill';
+                llmStatus.dataset.state = 'error';
             }
         }
 
