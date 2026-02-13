@@ -9,6 +9,13 @@ try:
 except ImportError:  # Allows fallback templates without the dependency
     Anthropic = None
 
+try:
+    import language_tool_python
+except ImportError:
+    language_tool_python = None
+
+import requests
+
 from app.research_client import ResearchClient, ResearchResult
 
 
@@ -26,10 +33,23 @@ class NithinPostGenerator:
         self.data_dir = Path(data_dir)
         self.style = self._load_json("nithin_style_guide.json")
         api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if Anthropic is None or not api_key:
-            self.client = None
-        else:
+        self.client = None
+        self.llm_provider = None
+        if Anthropic is not None and api_key:
             self.client = Anthropic(api_key=api_key)
+            self.llm_provider = "anthropic"
+
+        self.ollama_model = os.environ.get("OLLAMA_MODEL")
+        self.ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        if self.client is None and self.ollama_model:
+            self.llm_provider = "ollama"
+
+        self.lt_tool = None
+        if language_tool_python is not None:
+            try:
+                self.lt_tool = language_tool_python.LanguageToolPublicAPI("en-US")
+            except Exception:
+                self.lt_tool = None
         self.research = ResearchClient()
 
     def _load_json(self, filename: str) -> dict:
@@ -40,7 +60,7 @@ class NithinPostGenerator:
             return json.load(f)
 
     def is_available(self) -> bool:
-        return self.client is not None
+        return self.llm_provider in {"anthropic", "ollama"}
 
     def generate(
         self,
@@ -82,7 +102,7 @@ class NithinPostGenerator:
             text = self._fallback_template(context, platform, facts, angle, cta, thread)
             return GeneratedPost(
                 text=text,
-                warnings=warnings + ["Anthropic API key not configured. Returned a structured draft template."],
+                warnings=warnings + ["No LLM configured. Returned a structured draft template."],
                 metadata={
                     "platform": platform,
                     "thread": thread,
@@ -106,18 +126,12 @@ class NithinPostGenerator:
         )
 
         try:
-            response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=1200,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}]
-            )
-            text = response.content[0].text.strip()
+            text = self._llm_generate(system_prompt, user_prompt, max_tokens=1200)
         except Exception as exc:
             text = self._fallback_template(context, platform, facts, angle, cta, thread)
             return GeneratedPost(
                 text=text,
-                warnings=warnings + [f"Claude API error: {exc}. Returned a structured draft template."],
+                warnings=warnings + [f"LLM error: {exc}. Returned a structured draft template."],
                 metadata={
                     "platform": platform,
                     "thread": thread,
@@ -295,43 +309,68 @@ Sources:
 Return 3-5 concise bullets."""
 
         try:
-            response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=300,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}]
-            )
-            return response.content[0].text.strip()
+            return self._llm_generate(system_prompt, user_prompt, max_tokens=300)
         except Exception:
             return ""
 
     def _proofread(self, draft: str, platform: str, thread: bool) -> Optional[str]:
-        if not self.is_available():
+        if self.is_available():
+            system_prompt = (
+                "You are a careful editor. Fix grammar, spelling, and punctuation only. "
+                "Do not change meaning, tone, or add/remove facts. Preserve citations like [1]. "
+                "Keep thread numbering as-is."
+            )
+            user_prompt = f"Proofread this {platform} draft:\n\n{draft}"
+
+            try:
+                edited = self._llm_generate(system_prompt, user_prompt, max_tokens=900)
+                if not edited:
+                    return None
+                if len(edited) > len(draft) * 1.2:
+                    return None
+                return edited
+            except Exception:
+                return None
+
+        if self.lt_tool is None:
             return None
 
-        system_prompt = (
-            "You are a careful editor. Fix grammar, spelling, and punctuation only. "
-            "Do not change meaning, tone, or add/remove facts. Preserve citations like [1]. "
-            "Keep thread numbering as-is."
-        )
-        user_prompt = f"Proofread this {platform} draft:\n\n{draft}"
-
         try:
+            corrected = self.lt_tool.correct(draft)
+            if len(corrected) > len(draft) * 1.2:
+                return None
+            return corrected
+        except Exception:
+            return None
+
+    def _llm_generate(self, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
+        if self.llm_provider == "anthropic":
             response = self.client.messages.create(
                 model="claude-sonnet-4-20250514",
-                max_tokens=900,
+                max_tokens=max_tokens,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}]
             )
-            edited = response.content[0].text.strip()
-            if not edited:
-                return None
-            # Guardrail: avoid huge expansion
-            if len(edited) > len(draft) * 1.2:
-                return None
-            return edited
-        except Exception:
-            return None
+            return response.content[0].text.strip()
+
+        if self.llm_provider == "ollama":
+            payload = {
+                "model": self.ollama_model,
+                "stream": False,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "options": {"num_predict": max_tokens}
+            }
+            url = f"{self.ollama_host.rstrip('/')}/api/chat"
+            response = requests.post(url, json=payload, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            message = data.get("message", {})
+            return (message.get("content") or "").strip()
+
+        raise RuntimeError("No LLM provider configured")
 
     def _format_sources(self, results: list[ResearchResult]) -> list[dict]:
         return [

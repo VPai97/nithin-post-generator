@@ -30,7 +30,11 @@ async def index(request: Request):
 @app.get("/api/nithin/status")
 async def get_nithin_status():
     generator = get_nithin_generator()
-    return {"available": generator.is_available()}
+    return {
+        "available": generator.is_available(),
+        "provider": generator.llm_provider,
+        "research_available": generator.research.is_available()
+    }
 
 
 @app.post("/api/nithin/generate", response_model=NithinGenerateResponse)

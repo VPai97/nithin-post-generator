@@ -7,6 +7,8 @@ Generate X and LinkedIn drafts in Nithin Kamath's public voice, using a local st
 export ANTHROPIC_API_KEY="your_key"
 export RESEARCH_PROVIDER="tavily" # or serper, brave
 export RESEARCH_API_KEY="your_search_key"
+export OLLAMA_MODEL="llama3.1" # optional local LLM
+export OLLAMA_HOST="http://localhost:11434" # optional
 ```
 
 ## Run the web app
@@ -52,3 +54,5 @@ python scripts/ingest_nitter_pdf.py \
 - Drafts should be reviewed before publishing.
 - Style guide is currently locked. Use `--force-update-style` to override during ingestion.
 - Research is optional and requires a provider + API key.
+- If no API key is available, you can run a local model via Ollama (`OLLAMA_MODEL`).
+- For grammar-only proofreading without an LLM, the app uses LanguageTool (public API).

@@ -4,6 +4,11 @@ from typing import Optional
 
 import requests
 
+try:
+    from duckduckgo_search import DDGS
+except ImportError:
+    DDGS = None
+
 
 @dataclass
 class ResearchResult:
@@ -23,8 +28,13 @@ class ResearchClient:
             or os.environ.get("SERPER_API_KEY")
             or os.environ.get("BRAVE_API_KEY")
         )
+        if not self.provider and DDGS is not None:
+            # Default to duckduckgo if available
+            self.provider = "duckduckgo"
 
     def is_available(self) -> bool:
+        if self.provider == "duckduckgo":
+            return DDGS is not None
         return bool(self.provider and self.api_key)
 
     def search(self, query: str, max_results: int = 5) -> list[ResearchResult]:
@@ -37,6 +47,8 @@ class ResearchClient:
             return self._search_serper(query, max_results)
         if self.provider == "brave":
             return self._search_brave(query, max_results)
+        if self.provider == "duckduckgo":
+            return self._search_duckduckgo(query, max_results)
 
         return []
 
@@ -60,6 +72,21 @@ class ResearchClient:
                     snippet=item.get("content", "") or item.get("snippet", "")
                 )
             )
+        return results
+
+    def _search_duckduckgo(self, query: str, max_results: int) -> list[ResearchResult]:
+        if DDGS is None:
+            return []
+        results = []
+        with DDGS() as ddgs:
+            for item in ddgs.text(query, max_results=max_results):
+                results.append(
+                    ResearchResult(
+                        title=item.get("title", ""),
+                        url=item.get("href", ""),
+                        snippet=item.get("body", "")
+                    )
+                )
         return results
 
     def _search_serper(self, query: str, max_results: int) -> list[ResearchResult]:
