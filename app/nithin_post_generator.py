@@ -1,5 +1,8 @@
+import hashlib
 import json
 import os
+import random
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -99,14 +102,30 @@ class NithinPostGenerator:
                     warnings.append("Research skipped (context sufficient or no query provided)")
 
         if not self.is_available():
-            text = self._fallback_template(context, platform, facts, angle, cta, thread)
+            text = self._offline_generate(
+                context=context,
+                platform=platform,
+                facts=facts,
+                angle=angle,
+                cta=cta,
+                thread=thread,
+                variants=variants,
+                max_chars=max_chars
+            )
+            if proofread:
+                proofread_text = self._proofread(text, platform, thread)
+                if proofread_text:
+                    text = proofread_text
+                else:
+                    warnings.append("Proofread step failed, returning original draft")
+            warnings.extend(self._basic_warnings(text, platform, max_chars, thread))
             return GeneratedPost(
                 text=text,
-                warnings=warnings + ["No LLM configured. Returned a structured draft template."],
+                warnings=warnings + ["No LLM configured. Returned a style-based offline draft."],
                 metadata={
                     "platform": platform,
                     "thread": thread,
-                    "variants": 1,
+                    "variants": variants,
                     "llm": False,
                     "research_used": research_used,
                     "research_query": research_query_used,
@@ -399,35 +418,248 @@ Return 3-5 concise bullets."""
 
         return warnings
 
-    def _fallback_template(
+    def _offline_generate(
         self,
         context: str,
         platform: str,
         facts: list[str],
         angle: Optional[str],
         cta: Optional[str],
-        thread: bool
+        thread: bool,
+        variants: int,
+        max_chars: Optional[int]
     ) -> str:
-        facts_line = "; ".join(facts) if facts else "[ADD FACT]"
-        angle_line = angle or "pragmatic, balanced take"
-        cta_line = cta or "What do you think?"
-
-        if platform == "x":
-            if thread:
-                return (
-                    "1/3 " + context.strip() + "\n"
-                    "2/3 " + f"Data/Example: {facts_line}. {angle_line}.\n"
-                    "3/3 " + f"Takeaway: [ADD TAKEAWAY]. {cta_line}"
+        variants = max(1, int(variants or 1))
+        outputs: list[str] = []
+        for i in range(variants):
+            rng = self._rng_for(context, platform, str(i + 1))
+            if platform == "x":
+                post = self._build_x_offline(
+                    rng=rng,
+                    context=context,
+                    facts=facts,
+                    angle=angle,
+                    cta=cta,
+                    thread=thread,
+                    max_chars=max_chars
                 )
-            return f"{context.strip()} Data: {facts_line}. {angle_line}. {cta_line}"
+            else:
+                post = self._build_linkedin_offline(
+                    rng=rng,
+                    context=context,
+                    facts=facts,
+                    angle=angle,
+                    cta=cta
+                )
+            outputs.append(post)
 
-        # LinkedIn fallback
-        return (
-            f"{context.strip()}\n\n"
-            f"Data or example: {facts_line}.\n\n"
-            f"What we learned / did: [ADD DETAIL].\n\n"
-            f"Takeaway: {angle_line}. {cta_line}"
+        if len(outputs) == 1:
+            return outputs[0]
+        return "\n\n---\n\n".join(
+            f"Variant {idx + 1}:\n{post}" for idx, post in enumerate(outputs)
         )
+
+    def _rng_for(self, *parts: str) -> random.Random:
+        seed_text = "|".join(p or "" for p in parts)
+        seed = int(hashlib.md5(seed_text.encode("utf-8")).hexdigest(), 16) % (2**32)
+        return random.Random(seed)
+
+    def _clean_phrases(self, phrases: list[str]) -> list[str]:
+        if not phrases:
+            return []
+        bad_terms = [
+            "nitter",
+            "hls",
+            "enable hls",
+            "replies",
+            "comments",
+            "link in",
+            "link to",
+            "zerodha com",
+            "reposted",
+            "video piped",
+            "com z",
+            "kamath reposted"
+        ]
+        cleaned: list[str] = []
+        for phrase in phrases:
+            value = phrase.strip()
+            if not value:
+                continue
+            lower = value.lower()
+            if any(term in lower for term in bad_terms):
+                continue
+            if not re.search(r"[a-zA-Z]", value):
+                continue
+            if len(value.split()) > 10:
+                continue
+            cleaned.append(value)
+        return cleaned
+
+    def _pick(self, rng: random.Random, options: list[str], fallback: str) -> str:
+        if not options:
+            return fallback
+        return rng.choice(options)
+
+    def _shorten(self, text: str, max_words: int) -> str:
+        words = text.split()
+        if len(words) <= max_words:
+            return text
+        return " ".join(words[:max_words]).rstrip() + "..."
+
+    def _build_hook(self, context: str, opener: str) -> str:
+        base = context.strip() if context.strip() else "[ADD CONTEXT]"
+        if not opener:
+            return base
+        opener = opener.strip()
+        if not opener.endswith((".", "?", ":")):
+            opener = opener + ":"
+        return f"{opener} {base}"
+
+    def _format_facts_short(self, facts: list[str], max_items: int = 2) -> str:
+        if not facts:
+            return "[ADD FACT]"
+        items = [f for f in facts if f.strip()]
+        if not items:
+            return "[ADD FACT]"
+        items = items[:max_items]
+        if len(items) == 1:
+            return f"Data: {items[0]}"
+        return "Data: " + " | ".join(items)
+
+    def _takeaway_line(self, rng: random.Random, angle: Optional[str]) -> str:
+        prefixes = ["Takeaway", "Net", "So what", "Bottom line", "The question to ask"]
+        prefix = self._pick(rng, prefixes, "Takeaway")
+        content = angle.strip() if angle else "[ADD TAKEAWAY]"
+        return f"{prefix}: {content}"
+
+    def _default_question(self, rng: random.Random) -> str:
+        questions = [
+            "What are you seeing on this?",
+            "Curious to hear other views.",
+            "Am I missing something here?",
+            "Would love counterpoints."
+        ]
+        return self._pick(rng, questions, "Curious to hear other views.")
+
+    def _build_x_offline(
+        self,
+        rng: random.Random,
+        context: str,
+        facts: list[str],
+        angle: Optional[str],
+        cta: Optional[str],
+        thread: bool,
+        max_chars: Optional[int]
+    ) -> str:
+        style = self.style.get("derived", {})
+        openers = self._clean_phrases(style.get("common_openers", {}).get("x", []))
+        signature = [p for p in self.style.get("signature_phrases", [])]
+        openers = openers + signature
+        fallback_openers = [
+            "Quick thought",
+            "Short note",
+            "A simple way to look at this",
+            "One thing to keep in mind",
+            "The question to ask"
+        ]
+        opener = self._pick(rng, openers, self._pick(rng, fallback_openers, "Quick thought"))
+
+        hook = self._build_hook(self._shorten(context.strip(), 28), opener)
+        fact_line = self._format_facts_short(facts)
+        takeaway = self._takeaway_line(rng, angle)
+        cta_line = cta.strip() if cta else ""
+
+        question_rate = style.get("question_rate", {}).get("x", 0.18)
+        if not cta_line and rng.random() < question_rate:
+            cta_line = self._default_question(rng)
+
+        if thread:
+            segments = [hook]
+            if fact_line:
+                segments.append(fact_line)
+            if takeaway:
+                segments.append(takeaway)
+            if cta_line:
+                segments.append(cta_line)
+            segments = segments[:5]
+            count = len(segments)
+            per_post_limit = max_chars or self.style.get("platforms", {}).get("x", {}).get("max_chars", 280)
+            tweets = []
+            for idx, segment in enumerate(segments):
+                numbered = f"{idx + 1}/{count} {segment}"
+                if len(numbered) > per_post_limit:
+                    numbered = numbered[: max(per_post_limit - 1, 1)].rstrip() + "…"
+                tweets.append(numbered)
+            return "\n\n".join(tweets)
+
+        lines = [hook, fact_line, takeaway]
+        if cta_line:
+            lines.append(cta_line)
+
+        per_post_limit = max_chars or self.style.get("platforms", {}).get("x", {}).get("max_chars", 280)
+        text = "\n".join(line for line in lines if line)
+        if len(text) <= per_post_limit:
+            return text
+
+        # Drop optional CTA first if needed
+        if cta_line:
+            lines = [hook, fact_line, takeaway]
+            text = "\n".join(line for line in lines if line)
+        if len(text) <= per_post_limit:
+            return text
+
+        # Shorten hook if still long
+        short_hook = self._shorten(hook, 18)
+        lines = [short_hook, fact_line, takeaway]
+        text = "\n".join(line for line in lines if line)
+        if len(text) > per_post_limit:
+            text = text[: max(per_post_limit - 1, 1)].rstrip() + "…"
+        return text
+
+    def _build_linkedin_offline(
+        self,
+        rng: random.Random,
+        context: str,
+        facts: list[str],
+        angle: Optional[str],
+        cta: Optional[str]
+    ) -> str:
+        style = self.style.get("derived", {})
+        openers = self._clean_phrases(style.get("common_openers", {}).get("linkedin", []))
+        signature = [p for p in self.style.get("signature_phrases", [])]
+        fallback_openers = [
+            "Here are a few thoughts",
+            "Sharing a quick observation",
+            "A candid note",
+            "Some context",
+            "A simple way to look at this"
+        ]
+        opener = self._pick(rng, openers + signature, self._pick(rng, fallback_openers, "Here are a few thoughts"))
+
+        hook = self._build_hook(self._shorten(context.strip(), 50), opener)
+        paragraphs = [hook]
+
+        if facts:
+            if len(facts) == 1:
+                paragraphs.append(f"Data point: {facts[0]}")
+            else:
+                fact_lines = "\n".join(f"- {fact}" for fact in facts[:4])
+                paragraphs.append(f"Data points:\n{fact_lines}")
+        else:
+            paragraphs.append("[ADD FACT]")
+
+        takeaway = angle.strip() if angle else "[ADD TAKEAWAY]"
+        paragraphs.append(f"What I'd take from this: {takeaway}.")
+
+        if cta and cta.strip():
+            paragraphs.append(cta.strip())
+        else:
+            question_rate = style.get("question_rate", {}).get("linkedin", 0.16)
+            if rng.random() < question_rate:
+                paragraphs.append(self._default_question(rng))
+
+        return "\n\n".join(p for p in paragraphs if p)
 
 
 # Singleton instance
