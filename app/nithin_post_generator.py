@@ -589,7 +589,7 @@ Return 3-5 concise bullets."""
             for idx, segment in enumerate(segments):
                 numbered = f"{idx + 1}/{count} {segment}"
                 if len(numbered) > per_post_limit:
-                    numbered = numbered[: max(per_post_limit - 1, 1)].rstrip() + "…"
+                    numbered = numbered[: max(per_post_limit - 1, 1)].rstrip() + "..."
                 tweets.append(numbered)
             return "\n\n".join(tweets)
 
@@ -614,7 +614,7 @@ Return 3-5 concise bullets."""
         lines = [short_hook, fact_line, takeaway]
         text = "\n".join(line for line in lines if line)
         if len(text) > per_post_limit:
-            text = text[: max(per_post_limit - 1, 1)].rstrip() + "…"
+            text = text[: max(per_post_limit - 1, 1)].rstrip() + "..."
         return text
 
     def _build_linkedin_offline(
